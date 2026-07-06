@@ -2,6 +2,8 @@
 
 A macOS menu bar app that automatically tracks office attendance by detecting your office WiFi network.
 
+![Screenshot 2026-07-06 at 11.01.01 AM.png](Screenshot%202026-07-06%20at%2011.01.01%E2%80%AFAM.png)
+
 ## How it works
 
 - Checks every 5 minutes if your office WiFi is connected
