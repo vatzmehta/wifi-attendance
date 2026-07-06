@@ -1,0 +1,15 @@
+# Binaries and build output
+wifi-attendance
+WiFiAttendance.app/
+
+# Claude Code internal (contains company-internal skills)
+.claude/
+
+# Temp / telemetry
+tmp/
+
+# IDE
+.idea/
+
+# macOS
+.DS_Store
