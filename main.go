@@ -46,6 +46,9 @@ func onReady() {
 			return
 		}
 		cfg = &config.Config{OfficeSSID: ssid}
+		if gw, gwErr := wifi.DefaultGateway(); gwErr == nil {
+			cfg.OfficeGateway = gw
+		}
 		if saveErr := config.Save(cfg); saveErr != nil {
 			fmt.Fprintf(os.Stderr, "config save error: %v\n", saveErr)
 		}
@@ -79,7 +82,11 @@ func onReady() {
 
 	systray.AddSeparator()
 
-	mSSIDLabel := systray.AddMenuItem(fmt.Sprintf("Office WiFi: %q", cfg.OfficeSSID), "")
+	ssidLabel := fmt.Sprintf("Office WiFi: %q", cfg.OfficeSSID)
+	if cfg.OfficeGateway != "" {
+		ssidLabel = fmt.Sprintf("Office WiFi: %q (gw %s)", cfg.OfficeSSID, cfg.OfficeGateway)
+	}
+	mSSIDLabel := systray.AddMenuItem(ssidLabel, "")
 	mSSIDLabel.Disable()
 	mStatus := systray.AddMenuItem("Status: checking…", "")
 	mStatus.Disable()
@@ -91,6 +98,7 @@ func onReady() {
 	mCheckNow := systray.AddMenuItem("Check Now", "Run a WiFi check immediately")
 	mMarkDate := systray.AddMenuItem("Mark Attendance for Date…", "Manually mark a date as attended")
 	mChangeSSID := systray.AddMenuItem("Change Office WiFi", "Update the office WiFi name")
+	mCaptureGateway := systray.AddMenuItem("Capture Office Gateway", "Save current router IP as the office gateway")
 
 	loginLabel := "Launch at Login"
 	if loginitem.IsEnabled() {
@@ -101,12 +109,20 @@ func onReady() {
 	systray.AddSeparator()
 	addQuit()
 
+	updateSSIDLabel := func() {
+		label := fmt.Sprintf("Office WiFi: %q", cfg.OfficeSSID)
+		if cfg.OfficeGateway != "" {
+			label = fmt.Sprintf("Office WiFi: %q (gw %s)", cfg.OfficeSSID, cfg.OfficeGateway)
+		}
+		mSSIDLabel.SetTitle(label)
+	}
+
 	updateMenu := func() {
 		now := time.Now()
 		nowIST := now.In(ist)
 
-		connected, _ := wifi.IsConnectedTo(cfg.OfficeSSID)
-		if connected {
+		atOffice, _ := wifi.IsAtOffice(cfg.OfficeSSID, cfg.OfficeGateway)
+		if atOffice {
 			changed := store.MarkToday(ist)
 			if changed {
 				if saveErr := store.Save(); saveErr != nil {
@@ -151,11 +167,11 @@ func onReady() {
 			mWarn.Hide()
 		}
 
-		// WiFi status
-		if connected {
-			mStatus.SetTitle("Status: Connected ✓")
+		// WiFi / gateway status
+		if atOffice {
+			mStatus.SetTitle("Status: At office ✓")
 		} else {
-			mStatus.SetTitle("Status: Not connected")
+			mStatus.SetTitle("Status: Not at office")
 		}
 		mLastChecked.SetTitle("Last checked: " + nowIST.Format("3:04 PM IST"))
 
@@ -205,8 +221,20 @@ func onReady() {
 					continue
 				}
 				cfg.OfficeSSID = ssid
+				if gw, gwErr := wifi.DefaultGateway(); gwErr == nil {
+					cfg.OfficeGateway = gw
+				}
 				_ = config.Save(cfg)
-				mSSIDLabel.SetTitle(fmt.Sprintf("Office WiFi: %q", cfg.OfficeSSID))
+				updateSSIDLabel()
+				updateMenu()
+			case <-mCaptureGateway.ClickedCh:
+				gw, err := wifi.DefaultGateway()
+				if err != nil {
+					continue
+				}
+				cfg.OfficeGateway = gw
+				_ = config.Save(cfg)
+				updateSSIDLabel()
 				updateMenu()
 			}
 		}

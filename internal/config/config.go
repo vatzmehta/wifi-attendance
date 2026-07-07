@@ -13,7 +13,8 @@ import (
 
 // Config holds app configuration persisted to disk.
 type Config struct {
-	OfficeSSID string `json:"office_ssid"`
+	OfficeSSID    string `json:"office_ssid"`
+	OfficeGateway string `json:"office_gateway"`
 }
 
 // ErrNotConfigured is returned when no config file exists yet.
