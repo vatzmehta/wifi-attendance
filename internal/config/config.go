@@ -90,11 +90,16 @@ func PromptSSID() (string, error) {
 // PromptDate opens an osascript dialog asking for a date in DD/MM/YYYY format.
 // Returns the date as a YYYY-MM-DD string on success.
 func PromptDate(defaultDate string) (string, error) {
+	return PromptDateWith("Enter date to mark as attended (DD/MM/YYYY):", "Mark Attendance", "Mark", defaultDate)
+}
+
+// PromptDateWith opens an osascript dialog asking for a date in DD/MM/YYYY format,
+// with the given message, window title and confirm-button label.
+// Returns the date as a YYYY-MM-DD string on success.
+func PromptDateWith(message, title, button, defaultDate string) (string, error) {
 	script := fmt.Sprintf(
-		`display dialog "Enter date to mark as attended (DD/MM/YYYY):" `+
-			`default answer %q with title "Mark Attendance" `+
-			`buttons {"Cancel", "Mark"} default button "Mark"`,
-		defaultDate,
+		`display dialog %q default answer %q with title %q buttons {"Cancel", %q} default button %q`,
+		message, defaultDate, title, button, button,
 	)
 	out, err := exec.Command("osascript", "-e", script).Output()
 	if err != nil {
@@ -110,6 +115,25 @@ func PromptDate(defaultDate string) (string, error) {
 		return "", fmt.Errorf("config: invalid date %q — use DD/MM/YYYY", input)
 	}
 	return t.Format("2006-01-02"), nil
+}
+
+// PromptConfirm opens an osascript dialog with Cancel and the given confirm button.
+// Returns true only if the user pressed the confirm button.
+func PromptConfirm(message, button string) bool {
+	script := fmt.Sprintf(
+		`display dialog %q with title "WiFi Attendance" buttons {"Cancel", %q} default button %q`,
+		message, button, button,
+	)
+	return exec.Command("osascript", "-e", script).Run() == nil
+}
+
+// ShowAlert opens an osascript dialog showing message with a single OK button.
+func ShowAlert(message string) {
+	script := fmt.Sprintf(
+		`display dialog %q with title "WiFi Attendance" buttons {"OK"} default button "OK" with icon stop`,
+		message,
+	)
+	_ = exec.Command("osascript", "-e", script).Run()
 }
 
 func appSupportDir() (string, error) {
