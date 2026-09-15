@@ -6,6 +6,17 @@ import (
 	"time"
 )
 
+// OffKind says why a date is not a working day.
+type OffKind string
+
+const (
+	Holiday OffKind = "holiday"
+	Leave   OffKind = "leave"
+)
+
+// OffDays maps an ISO date (YYYY-MM-DD) to why it is not a working day. nil means none.
+type OffDays map[string]OffKind
+
 // Stats holds all computed attendance metrics for the current month.
 type Stats struct {
 	WorkingDaysSoFar     int
@@ -16,19 +27,21 @@ type Stats struct {
 	StillNeeded          int // max(0, Required - Attended)
 	PresentToday         bool
 	WeekAttended         int
-	ShouldWarn           bool   // need >80% of remaining to hit target
-	MenuLabel            string // e.g. "6/10 ✓"
+	WeekRequired         int     // max(0, 3 - weekday off-days in the current Mon–Fri week)
+	TodayOff             OffKind // "" when today is a working day or a weekend
+	ShouldWarn           bool    // need >80% of remaining to hit target
+	MenuLabel            string  // e.g. "6/10 ✓"
 }
 
-// Calculate derives all attendance stats from attended counts and the current time.
+// Calculate derives all attendance stats from attended counts, the current time, and days off.
 // Pure function — no I/O, fully testable.
-func Calculate(attended, attendedThisWeek int, presentToday bool, now time.Time, loc *time.Location) Stats {
+func Calculate(attended, attendedThisWeek int, presentToday bool, now time.Time, loc *time.Location, off OffDays) Stats {
 	nowIST := now.In(loc)
 	year, month, todayDay := nowIST.Date()
 
-	soFar := countWorkingDays(year, month, 1, todayDay, loc)
+	soFar := countWorkingDays(year, month, 1, todayDay, loc, off)
 	lastDay := daysInMonth(year, month)
-	remaining := countWorkingDays(year, month, todayDay+1, lastDay, loc)
+	remaining := countWorkingDays(year, month, todayDay+1, lastDay, loc, off)
 	total := soFar + remaining
 	required := int(math.Ceil(float64(total) * 0.60))
 	stillNeeded := max(0, required-attended)
@@ -46,6 +59,12 @@ func Calculate(attended, attendedThisWeek int, presentToday bool, now time.Time,
 	}
 	label := fmt.Sprintf("%d/%d %s", attended, required, indicator)
 
+	var todayOff OffKind
+	wd := nowIST.Weekday()
+	if wd != time.Saturday && wd != time.Sunday {
+		todayOff = off[nowIST.Format("2006-01-02")]
+	}
+
 	return Stats{
 		WorkingDaysSoFar:     soFar,
 		WorkingDaysRemaining: remaining,
@@ -55,18 +74,37 @@ func Calculate(attended, attendedThisWeek int, presentToday bool, now time.Time,
 		StillNeeded:          stillNeeded,
 		PresentToday:         presentToday,
 		WeekAttended:         attendedThisWeek,
+		WeekRequired:         max(0, 3-offDaysThisWeek(nowIST, off)),
+		TodayOff:             todayOff,
 		ShouldWarn:           shouldWarn,
 		MenuLabel:            label,
 	}
 }
 
-// countWorkingDays counts Mon–Fri days between fromDay and toDay (inclusive) in the given month.
-func countWorkingDays(year int, month time.Month, fromDay, toDay int, loc *time.Location) int {
+// countWorkingDays counts Mon–Fri days between fromDay and toDay (inclusive) in the given month
+// that are not marked as a day off.
+func countWorkingDays(year int, month time.Month, fromDay, toDay int, loc *time.Location, off OffDays) int {
 	count := 0
 	for d := fromDay; d <= toDay; d++ {
 		t := time.Date(year, month, d, 12, 0, 0, 0, loc)
 		wd := t.Weekday()
-		if wd != time.Saturday && wd != time.Sunday {
+		if wd != time.Saturday && wd != time.Sunday && off[t.Format("2006-01-02")] == "" {
+			count++
+		}
+	}
+	return count
+}
+
+// offDaysThisWeek counts off-days on Mon–Fri of the week containing now.
+func offDaysThisWeek(now time.Time, off OffDays) int {
+	weekday := int(now.Weekday())
+	if weekday == 0 {
+		weekday = 7 // Sunday → 7
+	}
+	monday := now.AddDate(0, 0, -(weekday - 1))
+	count := 0
+	for i := 0; i < 5; i++ {
+		if off[monday.AddDate(0, 0, i).Format("2006-01-02")] != "" {
 			count++
 		}
 	}

@@ -135,7 +135,7 @@ func onReady() {
 		attended := store.DaysThisMonth(year, month, ist)
 		weekAttended := store.DaysThisWeek(ist)
 		presentToday := store.IsPresentToday(ist)
-		stats := policy.Calculate(attended, weekAttended, presentToday, now, ist)
+		stats := policy.Calculate(attended, weekAttended, presentToday, now, ist, nil)
 
 		// Menu bar title
 		systray.SetTitle(stats.MenuLabel)
