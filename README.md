@@ -11,12 +11,14 @@ A macOS menu bar app that automatically tracks office attendance by detecting yo
 - Displays `attended/required` in the menu bar (e.g. `6/14 ✓`)
 - Warns (`⚠`) when you need to attend more than 80% of remaining working days to hit the monthly target
 - All calculations are month-to-date, weekdays only (Mon–Fri), in IST
+- Holidays and leaves you mark are excluded from working days
 
 ## Policy
 
 - **Monthly target**: 60% of working days in the month
 - **Weekly minimum**: 3 days per week
 - **Warning threshold**: If `days_still_needed / days_remaining > 80%`, a macOS notification fires (once per day)
+- **Working day**: Mon–Fri, excluding any date marked as a holiday or leave. The weekly minimum drops by one for each weekday holiday or leave that week.
 
 ## Menu bar
 
@@ -35,6 +37,14 @@ Last checked: 2:35 PM IST
 ─────────────────────────
 Check Now
 Mark Attendance for Date…
+Holidays & Leaves ▸
+  Mark Today as Holiday
+  Mark Today as Leave
+  Mark Holiday for Date…
+  Mark Leave for Date…
+  Marked dates (click to remove):
+  Holiday · Fri 02 Oct 2026
+  Leave · Fri 18 Sep 2026
 Change Office WiFi
 Launch at Login
 ─────────────────────────
@@ -68,6 +78,7 @@ On first launch, a dialog asks for your office WiFi network name (SSID). This is
 |---|---|
 | `~/Library/Application Support/wifi-attendance/config.json` | Office WiFi SSID |
 | `~/Library/Application Support/wifi-attendance/attendance.json` | Attended dates (ISO, IST) |
+| `~/Library/Application Support/wifi-attendance/daysoff.json` | Holiday and leave dates (ISO, IST) |
 | `~/Library/LaunchAgents/com.vatzmehta.wifi-attendance.plist` | Login item (if enabled) |
 
 ## Makefile targets

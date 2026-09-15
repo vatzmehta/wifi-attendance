@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getlantern/systray"
 	"github.com/vatzmehta/wifi-attendance/internal/attendance"
 	"github.com/vatzmehta/wifi-attendance/internal/config"
+	"github.com/vatzmehta/wifi-attendance/internal/daysoff"
 	"github.com/vatzmehta/wifi-attendance/internal/loginitem"
 	"github.com/vatzmehta/wifi-attendance/internal/notification"
 	"github.com/vatzmehta/wifi-attendance/internal/policy"
@@ -60,6 +62,12 @@ func onReady() {
 		store, _ = attendance.Load()
 	}
 
+	off, err := daysoff.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daysoff load error: %v\n", err)
+		off, _ = daysoff.Load()
+	}
+
 	throttle := &notification.Throttle{}
 
 	// --- Build menu items ---
@@ -97,6 +105,36 @@ func onReady() {
 
 	mCheckNow := systray.AddMenuItem("Check Now", "Run a WiFi check immediately")
 	mMarkDate := systray.AddMenuItem("Mark Attendance for Date…", "Manually mark a date as attended")
+
+	mDaysOff := systray.AddMenuItem("Holidays & Leaves", "Mark holidays and leaves; they are excluded from working days")
+	mTodayHoliday := mDaysOff.AddSubMenuItem("Mark Today as Holiday", "")
+	mTodayLeave := mDaysOff.AddSubMenuItem("Mark Today as Leave", "")
+	mDateHoliday := mDaysOff.AddSubMenuItem("Mark Holiday for Date…", "Dates from the start of this month to 3 months ahead")
+	mDateLeave := mDaysOff.AddSubMenuItem("Mark Leave for Date…", "Dates from the start of this month to 3 months ahead")
+	mDaysOffHeader := mDaysOff.AddSubMenuItem("Marked dates (click to remove):", "")
+	mDaysOffHeader.Disable()
+	daysOffRows := make([]*systray.MenuItem, maxDaysOffRows)
+	for i := range daysOffRows {
+		daysOffRows[i] = mDaysOff.AddSubMenuItem("", "")
+		daysOffRows[i].Hide()
+	}
+	mDaysOffMore := mDaysOff.AddSubMenuItem("", "")
+	mDaysOffMore.Disable()
+	mDaysOffMore.Hide()
+
+	// rowClicked carries the index of a clicked list row; one forwarder per row
+	// because select cannot range over a slice of channels.
+	rowClicked := make(chan int)
+	for i, row := range daysOffRows {
+		go func(i int, clicks <-chan struct{}) {
+			for range clicks {
+				rowClicked <- i
+			}
+		}(i, row.ClickedCh)
+	}
+	// listed mirrors what daysOffRows currently show. Only the menu goroutine touches it.
+	var listed []daysoff.Entry
+
 	mChangeSSID := systray.AddMenuItem("Change Office WiFi", "Update the office WiFi name")
 	mCaptureGateway := systray.AddMenuItem("Capture Office Gateway", "Save current router IP as the office gateway")
 
@@ -117,6 +155,25 @@ func onReady() {
 		mSSIDLabel.SetTitle(label)
 	}
 
+	refreshDaysOffList := func(nowIST time.Time) {
+		from, to := daysOffWindow(nowIST)
+		listed = off.Between(from, to)
+		for i, row := range daysOffRows {
+			if i < len(listed) {
+				row.SetTitle(fmt.Sprintf("%s · %s", offKindLabel(listed[i].Kind), prettyDate(listed[i].Date)))
+				row.Show()
+			} else {
+				row.Hide()
+			}
+		}
+		if extra := len(listed) - maxDaysOffRows; extra > 0 {
+			mDaysOffMore.SetTitle(fmt.Sprintf("…and %d more", extra))
+			mDaysOffMore.Show()
+		} else {
+			mDaysOffMore.Hide()
+		}
+	}
+
 	updateMenu := func() {
 		now := time.Now()
 		nowIST := now.In(ist)
@@ -135,15 +192,26 @@ func onReady() {
 		attended := store.DaysThisMonth(year, month, ist)
 		weekAttended := store.DaysThisWeek(ist)
 		presentToday := store.IsPresentToday(ist)
-		stats := policy.Calculate(attended, weekAttended, presentToday, now, ist, nil)
+		// A day actually spent in office stays a working day even if it was later
+		// marked as a holiday or leave, so attended can never exceed required.
+		offDays := off.OffDays()
+		for _, d := range store.Days {
+			delete(offDays, d)
+		}
+		stats := policy.Calculate(attended, weekAttended, presentToday, now, ist, offDays)
 
 		// Menu bar title
 		systray.SetTitle(stats.MenuLabel)
 
 		// Today
-		if presentToday {
+		switch {
+		case presentToday:
 			mToday.SetTitle("Today: Present ✓")
-		} else {
+		case stats.TodayOff == policy.Holiday:
+			mToday.SetTitle("Today: Holiday")
+		case stats.TodayOff == policy.Leave:
+			mToday.SetTitle("Today: On leave")
+		default:
 			mToday.SetTitle("Today: Not yet marked")
 		}
 
@@ -156,7 +224,8 @@ func onReady() {
 			mNeeded.SetTitle(fmt.Sprintf("Need %d more days to reach 60%% (%d required)",
 				stats.StillNeeded, stats.Required))
 		}
-		mWeek.SetTitle(fmt.Sprintf("This week: %d of 3 days", stats.WeekAttended))
+		mWeek.SetTitle(fmt.Sprintf("This week: %d of %d days", stats.WeekAttended, stats.WeekRequired))
+		refreshDaysOffList(nowIST)
 
 		// Warning
 		if stats.ShouldWarn {
@@ -183,6 +252,35 @@ func onReady() {
 		}
 	}
 
+	// markDayOff records a holiday or leave and refreshes the menu.
+	markDayOff := func(kind policy.OffKind, date string) {
+		if off.Mark(kind, date) {
+			if saveErr := off.Save(); saveErr != nil {
+				fmt.Fprintf(os.Stderr, "daysoff save error: %v\n", saveErr)
+			}
+		}
+		updateMenu()
+	}
+
+	// promptDayOff asks for a date and marks it if it falls inside the allowed window.
+	promptDayOff := func(kind policy.OffKind) {
+		nowIST := time.Now().In(ist)
+		label := offKindLabel(kind)
+		dateStr, err := config.PromptDateWith(
+			fmt.Sprintf("Enter date to mark as %s (DD/MM/YYYY):", strings.ToLower(label)),
+			"Mark "+label, "Mark", nowIST.Format("02/01/2006"))
+		if err != nil {
+			return
+		}
+		from, to := daysOffWindow(nowIST)
+		if dateStr < from || dateStr > to {
+			config.ShowAlert(fmt.Sprintf("Holidays and leaves can only be marked from %s (start of this month) to %s (3 months from today).",
+				prettyDate(from), prettyDate(to)))
+			return
+		}
+		markDayOff(kind, dateStr)
+	}
+
 	// Initial check
 	updateMenu()
 
@@ -205,6 +303,28 @@ func onReady() {
 				store.MarkDate(dateStr)
 				if saveErr := store.Save(); saveErr != nil {
 					fmt.Fprintf(os.Stderr, "attendance save error: %v\n", saveErr)
+				}
+				updateMenu()
+			case <-mTodayHoliday.ClickedCh:
+				markDayOff(policy.Holiday, time.Now().In(ist).Format("2006-01-02"))
+			case <-mTodayLeave.ClickedCh:
+				markDayOff(policy.Leave, time.Now().In(ist).Format("2006-01-02"))
+			case <-mDateHoliday.ClickedCh:
+				promptDayOff(policy.Holiday)
+			case <-mDateLeave.ClickedCh:
+				promptDayOff(policy.Leave)
+			case i := <-rowClicked:
+				if i >= len(listed) {
+					continue
+				}
+				entry := listed[i]
+				if !config.PromptConfirm(fmt.Sprintf("Remove %s on %s?", strings.ToLower(offKindLabel(entry.Kind)), prettyDate(entry.Date)), "Remove") {
+					continue
+				}
+				if off.Unmark(entry.Date) {
+					if saveErr := off.Save(); saveErr != nil {
+						fmt.Fprintf(os.Stderr, "daysoff save error: %v\n", saveErr)
+					}
 				}
 				updateMenu()
 			case <-mLoginItem.ClickedCh:
@@ -249,6 +369,36 @@ func addQuit() {
 		<-mQuit.ClickedCh
 		systray.Quit()
 	}()
+}
+
+// maxDaysOffRows caps how many marked dates the submenu lists; systray cannot
+// delete menu items, so a fixed pool of rows is shown and hidden as needed.
+const maxDaysOffRows = 24
+
+// daysOffWindow returns the inclusive ISO date range in which a holiday or leave may
+// be marked: the first of the current month through three months from today.
+func daysOffWindow(now time.Time) (from, to string) {
+	year, month, _ := now.Date()
+	from = time.Date(year, month, 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+	to = now.AddDate(0, 3, 0).Format("2006-01-02")
+	return from, to
+}
+
+// offKindLabel returns the menu label for a kind of day off.
+func offKindLabel(kind policy.OffKind) string {
+	if kind == policy.Holiday {
+		return "Holiday"
+	}
+	return "Leave"
+}
+
+// prettyDate formats an ISO date for display, e.g. "Fri 02 Oct 2026".
+func prettyDate(iso string) string {
+	t, err := time.Parse("2006-01-02", iso)
+	if err != nil {
+		return iso
+	}
+	return t.Format("Mon 02 Jan 2006")
 }
 
 func loadIcon() []byte {
