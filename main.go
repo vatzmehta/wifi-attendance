@@ -59,13 +59,13 @@ func onReady() {
 	store, err := attendance.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "attendance load error: %v\n", err)
-		store, _ = attendance.Load()
+		store = &attendance.Store{}
 	}
 
 	off, err := daysoff.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daysoff load error: %v\n", err)
-		off, _ = daysoff.Load()
+		off = &daysoff.Store{}
 	}
 
 	throttle := &notification.Throttle{}
@@ -224,7 +224,11 @@ func onReady() {
 			mNeeded.SetTitle(fmt.Sprintf("Need %d more days to reach 60%% (%d required)",
 				stats.StillNeeded, stats.Required))
 		}
-		mWeek.SetTitle(fmt.Sprintf("This week: %d of %d days", stats.WeekAttended, stats.WeekRequired))
+		if stats.WeekRequired == 0 {
+			mWeek.SetTitle("This week: no working days")
+		} else {
+			mWeek.SetTitle(fmt.Sprintf("This week: %d of %d days", stats.WeekAttended, stats.WeekRequired))
+		}
 		refreshDaysOffList(nowIST)
 
 		// Warning
