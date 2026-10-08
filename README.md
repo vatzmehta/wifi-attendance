@@ -12,6 +12,7 @@ A macOS menu bar app that automatically tracks office attendance by detecting yo
 - Warns (`⚠`) when you need to attend more than 80% of remaining working days to hit the monthly target
 - All calculations are month-to-date, weekdays only (Mon–Fri), in IST
 - Holidays and leaves you mark are excluded from working days
+- **History** lists the last 12 months with their totals; hover a month to see its day-by-day calendar
 
 ## Policy
 
@@ -37,6 +38,10 @@ Last checked: 2:35 PM IST
 ─────────────────────────
 Check Now
 Mark Attendance for Date…
+History ▸
+  October 2026 · 3 of 13 required ▸
+  September 2026 · 13 of 12 required ✓ ▸
+    (calendar of the month: present, absent, holiday and leave days)
 Holidays & Leaves ▸
   Mark Today as Holiday
   Mark Today as Leave

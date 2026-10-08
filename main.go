@@ -11,7 +11,9 @@ import (
 	"github.com/vatzmehta/wifi-attendance/internal/attendance"
 	"github.com/vatzmehta/wifi-attendance/internal/config"
 	"github.com/vatzmehta/wifi-attendance/internal/daysoff"
+	"github.com/vatzmehta/wifi-attendance/internal/history"
 	"github.com/vatzmehta/wifi-attendance/internal/loginitem"
+	"github.com/vatzmehta/wifi-attendance/internal/menucal"
 	"github.com/vatzmehta/wifi-attendance/internal/notification"
 	"github.com/vatzmehta/wifi-attendance/internal/policy"
 	"github.com/vatzmehta/wifi-attendance/internal/wifi"
@@ -106,6 +108,17 @@ func onReady() {
 	mCheckNow := systray.AddMenuItem("Check Now", "Run a WiFi check immediately")
 	mMarkDate := systray.AddMenuItem("Mark Attendance for Date…", "Manually mark a date as attended")
 
+	// systray cannot add menu items later, so a fixed pool of month rows is shown
+	// and hidden as needed. Each month's submenu holds one placeholder item that
+	// menucal replaces with a drawn calendar.
+	mHistory := systray.AddMenuItem("History", "Calendar of this and previous months")
+	historyRows := make([]*systray.MenuItem, maxHistoryMonths)
+	for i := range historyRows {
+		historyRows[i] = mHistory.AddSubMenuItem("", "")
+		historyRows[i].Hide()
+		historyRows[i].AddSubMenuItem(calendarPlaceholder(i), "")
+	}
+
 	mDaysOff := systray.AddMenuItem("Holidays & Leaves", "Mark holidays and leaves; they are excluded from working days")
 	mTodayHoliday := mDaysOff.AddSubMenuItem("Mark Today as Holiday", "")
 	mTodayLeave := mDaysOff.AddSubMenuItem("Mark Today as Leave", "")
@@ -174,6 +187,20 @@ func onReady() {
 		}
 	}
 
+	refreshHistory := func(now time.Time) {
+		months := history.Build(store.Days, off.OffDays(), now, ist, maxHistoryMonths)
+		for i, row := range historyRows {
+			if i >= len(months) {
+				row.Hide()
+				continue
+			}
+			m := months[i]
+			row.SetTitle(strings.TrimSpace(fmt.Sprintf("%s · %d of %d required %s", m.Title, m.Attended, m.Required, m.Mark)))
+			row.Show()
+			menucal.Set(calendarPlaceholder(i), calendarCells(m))
+		}
+	}
+
 	updateMenu := func() {
 		now := time.Now()
 		nowIST := now.In(ist)
@@ -230,6 +257,7 @@ func onReady() {
 			mWeek.SetTitle(fmt.Sprintf("This week: %d of %d days", stats.WeekAttended, stats.WeekRequired))
 		}
 		refreshDaysOffList(nowIST)
+		refreshHistory(now)
 
 		// Warning
 		if stats.ShouldWarn {
@@ -373,6 +401,37 @@ func addQuit() {
 		<-mQuit.ClickedCh
 		systray.Quit()
 	}()
+}
+
+// maxHistoryMonths caps the History submenu at the current month plus the eleven before it.
+const maxHistoryMonths = 12
+
+// calendarPlaceholder is the title of the menu item that carries month i's calendar.
+func calendarPlaceholder(i int) string {
+	return fmt.Sprintf("Calendar %d", i+1)
+}
+
+// calendarCells encodes a month's grid for menucal.Set, one character per cell.
+func calendarCells(m history.Month) string {
+	codes := map[history.State]byte{
+		history.Present: 'p',
+		history.Absent:  'a',
+		history.Holiday: 'h',
+		history.Leave:   'l',
+		history.Weekend: 'w',
+		history.None:    'n',
+	}
+	var b strings.Builder
+	for _, week := range m.Weeks {
+		for _, d := range week {
+			if d.Num == 0 {
+				b.WriteByte('.')
+			} else {
+				b.WriteByte(codes[d.State])
+			}
+		}
+	}
+	return b.String()
 }
 
 // maxDaysOffRows caps how many marked dates the submenu lists; systray cannot
