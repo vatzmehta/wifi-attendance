@@ -12,9 +12,9 @@
     <key>CFBundleDisplayName</key>
     <string>WiFi Attendance</string>
     <key>CFBundleVersion</key>
-    <string>1.0.0</string>
+    <string>1.2.0</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0.0</string>
+    <string>1.2.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>LSUIElement</key>
